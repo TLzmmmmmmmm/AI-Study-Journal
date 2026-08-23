@@ -392,11 +392,7 @@ $$
 Then an output projection $W^O$ combines their information:
 
 $$
-\boxed{
-\mathrm{MultiHead}(Q,K,V)
-=
-\mathrm{Concat}(head_1,\ldots,head_h)W^O
-}
+\boxed{\mathrm{MultiHead}(Q,K,V)=\mathrm{Concat}(head_1,\ldots,head_h)W^O}
 $$
 
 ### 7.3 Original Transformer Example
