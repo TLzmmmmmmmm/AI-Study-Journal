@@ -2,17 +2,15 @@
 # RAG Fundamentals Notes
 
 > Week 2 · Day 1  
-> Goal: Build a clear mental model of Retrieval-Augmented Generation before implementing a production RAG system.
+> Goal: Understand the core mental model of Retrieval-Augmented Generation before implementation.
 
 ---
 
 # 1. Why RAG Exists
 
-## 1.1 LLM Knowledge Boundary
+LLMs do not automatically query company databases.
 
-A Large Language Model does **not automatically query a company database** when answering a question.
-
-A basic LLM application looks like:
+A basic LLM application:
 
 ```text
 User Question
@@ -26,505 +24,219 @@ Answer
 
 The model mainly relies on:
 
-- model parameters learned during training
+- model parameters
 - system prompt
 - conversation history
 - current user message
 
-It does **not automatically have access to private or updated company knowledge**.
-
-For example:
-
-```text
-User:
-What frequency range does Product X support?
-
-LLM:
-403–470 MHz
-```
-
-The answer may be:
-
-1. correct because the model happened to learn it
-2. inferred from a similar product
-3. guessed
-4. completely hallucinated
-
-A fluent and specific answer is not necessarily a correct answer.
-
-### Key Idea
+A fluent answer may still be incorrect.
 
 ```text
 Plausible ≠ True
 ```
 
-LLMs generate probable token sequences rather than performing exact database lookups.
-
 ---
 
-## 1.2 Ungrounded vs Grounded Generation
+## 1.1 Grounded vs Ungrounded
 
-### Ungrounded Generation
+### Ungrounded
 
-The model makes factual claims without explicit supporting evidence supplied to the current request.
+The model makes factual claims without explicit supporting evidence.
 
 ```text
 Question
-   ↓
-LLM internal knowledge
-   ↓
+↓
+LLM Memory
+↓
 Answer
 ```
 
-Even if the answer is accidentally correct, it may still be ungrounded.
+### Grounded
 
----
-
-### Grounded Generation
-
-The model generates an answer based on explicit trusted evidence.
+The answer is supported by trusted evidence provided in the current context.
 
 ```text
 Company Document
-
-"Product X supports 400–470 MHz."
-
-        ↓
-
-LLM Context
-
-        ↓
-
-Answer:
-"Product X supports 400–470 MHz."
+↓
+Retrieved Evidence
+↓
+LLM
+↓
+Answer
 ```
 
-The answer can be traced back to a source.
-
-### Important Distinction
+Important:
 
 ```text
 Correctness ≠ Groundedness
 ```
 
-An answer can be:
-
-| Correct | Grounded | Meaning |
-|---|---|---|
-| Yes | Yes | Ideal |
-| Yes | No | Correct by model memory / luck |
-| No | Yes | Source or reasoning may be wrong |
-| No | No | Worst case |
+An answer can be correct by luck or model memory but still be ungrounded.
 
 ---
 
-## 1.3 Core Idea of RAG
+## 1.2 Core Idea of RAG
 
-RAG stands for:
-
-```text
-Retrieval-Augmented Generation
-```
-
-The idea is:
+RAG = Retrieval-Augmented Generation.
 
 ```text
-User Question
-     ↓
+Question
+   ↓
 Retrieve External Knowledge
-     ↓
+   ↓
 Relevant Evidence
-     ↓
+   ↓
 Add Evidence to Context
-     ↓
+   ↓
 LLM
-     ↓
+   ↓
 Grounded Answer
 ```
 
-RAG does **not normally train company knowledge into model parameters**.
+RAG usually does **not** train company knowledge into model parameters.
 
 Instead:
 
 ```text
 External Knowledge
-      ↓
+↓
 Retrieval
-      ↓
-Current Context Window
-      ↓
+↓
+Current Context
+↓
 LLM Inference
 ```
 
-### Core Definition
-
-> RAG retrieves relevant external knowledge at inference time and injects that knowledge into the model's context before generation.
+> RAG retrieves relevant external knowledge at inference time and injects it into the model's context.
 
 ---
 
 # 2. RAG Architecture
 
-RAG should be understood as **two pipelines**.
+RAG consists of two main pipelines.
 
----
-
-## 2.1 Offline / Indexing Pipeline
-
-```text
-Company Knowledge
-       ↓
-Preprocessing
-       ↓
-Chunking
-       ↓
-Chunks
-       ↓
-Embedding
-       ↓
-Vectors
-       ↓
-Vector Index
-```
-
-This usually happens **before the user sends a query**.
-
-Purpose:
-
-> Prepare company knowledge so that it can be searched efficiently later.
-
----
-
-## 2.2 Online / Query Pipeline
-
-```text
-User Query
-       ↓
-Query Embedding
-       ↓
-Query Vector
-       ↓
-Similarity Search
-       ↓
-Ranking
-       ↓
-Top-K Chunks
-       ↓
-Retrieve Original Text
-       ↓
-Context Injection
-       ↓
-LLM
-       ↓
-Grounded Answer
-```
-
-This happens while the user is waiting for a response.
-
----
-
-## 2.3 Offline vs Online
-
-### Offline
-
-Usually includes:
-
-- document ingestion
-- preprocessing
-- chunking
-- document embedding
-- vector index construction
-
-The user does not wait for these operations during every request.
-
-### Online
-
-Usually includes:
-
-- query embedding
-- retrieval
-- context construction
-- LLM inference
-- response streaming
-
-These operations directly affect user-facing latency.
-
----
-
-## 2.4 Indexing vs Retrieval
-
-### Indexing
-
-```text
-Prepare knowledge
-```
-
-Example:
+## 2.1 Offline: Indexing
 
 ```text
 Documents
-→ Chunks
-→ Embeddings
-→ Index
+   ↓
+Preprocessing
+   ↓
+Chunking
+   ↓
+Embeddings
+   ↓
+Vector Index
 ```
 
-### Retrieval
+Purpose:
 
-```text
-Select relevant knowledge for the current query
-```
-
-Example:
-
-```text
-Query
-→ Query Embedding
-→ Similarity Search
-→ Top-K
-```
-
-### Key Difference
-
-```text
-Indexing prepares knowledge.
-
-Retrieval selects knowledge.
-```
+> Prepare knowledge before users ask questions.
 
 ---
 
-## 2.5 Retrieval vs Generation
-
-### Retrieval
-
-Responsible for:
+## 2.2 Online: Query Pipeline
 
 ```text
-finding evidence
-```
-
-Output might simply be:
-
-```text
-Chunk A
-Chunk B
-Chunk C
-```
-
-### Generation
-
-Responsible for:
-
-```text
-using evidence to formulate a natural-language answer
-```
-
-Example:
-
-```text
-Retrieved Chunks
-      ↓
+User Query
+   ↓
+Query Embedding
+   ↓
+Similarity Search
+   ↓
+Top-K Chunks
+   ↓
+Original Text
+   ↓
+Context Injection
+   ↓
 LLM
-      ↓
-"Based on the available company information..."
+   ↓
+Grounded Answer
 ```
 
-### Key Idea
+### Key Differences
 
 ```text
-Retriever finds.
+Indexing
+= prepare knowledge
 
-LLM writes.
+Retrieval
+= select knowledge
+
+Generation
+= use knowledge to write the answer
 ```
 
 ---
 
 # 3. Documents and Chunks
 
-## 3.1 Why Documents Need Chunking
-
-Suppose a product page contains:
-
-```text
-Overview
-Features
-Technical Parameters
-Applications
-Accessories
-Support
-```
-
-If the entire page becomes one vector, retrieval granularity may be too coarse.
-
-A user asking:
-
-```text
-What is the frequency range?
-```
-
-only needs a small part of the page.
-
-Therefore:
+A long document is usually divided into smaller retrieval units called **chunks**.
 
 ```text
 Document
-   ↓
-Chunks
+├── Overview
+├── Features
+├── Technical Parameters
+└── Applications
 ```
 
----
+Why chunk?
 
-## 3.2 What Is a Chunk?
+Because users usually need only one part of a document.
 
-A Chunk is usually the basic unit used for retrieval.
-
-Example:
+### Chunk Too Large
 
 ```text
-Document: Product X
-
-Chunk 1:
-Product X Overview
-
-Chunk 2:
-Product X Features
-
-Chunk 3:
-Product X Frequency Specifications
-
-Chunk 4:
-Product X Battery Information
-```
-
-A good chunk should contain enough context to remain understandable.
-
----
-
-## 3.3 Chunk Too Large
-
-Possible problems:
-
-```text
-Too much unrelated information
-↓
-Semantic signal becomes less precise
-↓
-Retrieval precision may decrease
-↓
+More noise
+Less precise retrieval
 More context tokens
 ```
 
----
-
-## 3.4 Chunk Too Small
-
-Possible problems:
+### Chunk Too Small
 
 ```text
 Missing context
 Missing product identity
-Incomplete facts
-Broken semantic meaning
+Incomplete information
 ```
 
-Example:
+Goal:
 
-Bad chunk:
-
-```text
-Supports digital mode.
-```
-
-Question:
-
-```text
-Which product supports digital mode?
-```
-
-The chunk may no longer contain enough information to answer.
-
----
-
-## 3.5 Chunking Is a Granularity Problem
-
-The goal is not:
-
-```text
-make chunks as small as possible
-```
-
-or:
-
-```text
-make chunks as large as possible
-```
-
-The goal is:
-
-> Create retrieval units that are semantically meaningful and sufficiently self-contained.
+> Create chunks that are semantically meaningful and sufficiently self-contained.
 
 ---
 
 # 4. Original Text vs Embedding
 
-Suppose a chunk contains:
+Example chunk:
 
 ```text
 Product X supports 400–470 MHz.
 ```
 
-After embedding:
+Embedding:
 
 ```text
-[0.13, -0.42, 0.78, ..., 0.05]
+[0.13, -0.42, 0.78, ...]
 ```
 
-The vector helps the system determine:
-
-```text
-How semantically similar is this chunk to the query?
-```
-
-But the vector does **not replace the original factual text**.
-
----
-
-## 4.1 Why Keep Original Text?
-
-Because:
+Their roles are different:
 
 ```text
 Vector
-→ used to FIND knowledge
+→ used to find knowledge
 
 Original Text
-→ used to ANSWER the question
+→ used as evidence for the LLM
 ```
 
-Full flow:
-
-```text
-Original Chunk
-      │
-      ├──→ Embedding → Vector
-      │                  ↓
-      │            Similarity Search
-      │                  ↓
-      └──────── Retrieve Original Chunk
-                         ↓
-                   LLM Context
-                         ↓
-                       Answer
-```
-
-### Key Idea
-
-> Embeddings are semantic representations for retrieval, not replacements for the original knowledge.
+Therefore the original text must still be stored after embedding.
 
 ---
 
 # 5. Embeddings
-
-## 5.1 What Is an Embedding?
 
 An embedding maps text into a numerical vector.
 
@@ -536,334 +248,131 @@ Embedding Model
 Vector
 ```
 
+Semantically similar texts tend to have similar vector representations.
+
 Example:
 
 ```text
-"hotel wireless communication"
+酒店工作人员无线通信
 
+宾馆员工数字对讲系统
+```
+
+The keywords differ, but the meanings are similar.
+
+This enables:
+
+```text
+Semantic Similarity
 ↓
-
-[0.21, -0.42, 0.73, ..., 0.04]
-```
-
-The goal is to encode semantic relationships into a vector space.
-
----
-
-## 5.2 Why Embeddings Help Retrieval
-
-Consider:
-
-```text
-"酒店工作人员无线通信"
-```
-
-and:
-
-```text
-"宾馆员工数字对讲系统"
-```
-
-Keyword overlap is limited.
-
-But their meanings are similar.
-
-A good embedding model may produce vectors that are relatively close.
-
-Therefore:
-
-```text
-Semantic similarity
-        ↓
-Vector similarity
-        ↓
-Semantic retrieval
+Semantic Search
 ```
 
 ---
 
-# 6. Vector
+## 5.1 Token Embedding vs Retrieval Embedding
 
-A vector is an ordered list of numbers.
-
-Example:
-
-```text
-[0.21, -0.42, 0.73]
-```
-
-Real embedding vectors may contain hundreds or thousands of dimensions.
-
-Example:
-
-```text
-[x1, x2, x3, ..., xn]
-```
-
----
-
-## 6.1 Do Individual Dimensions Have Clear Meanings?
-
-Usually no.
-
-Do not assume:
-
-```text
-dimension 1 = hotel
-dimension 2 = communication
-dimension 3 = product
-```
-
-Embedding representations are generally **distributed representations**.
-
-Meaning is encoded across many dimensions together.
-
----
-
-# 7. Semantic Vector Space
-
-Each embedding can be imagined as a point in a high-dimensional space.
-
-Simplified 2D intuition:
-
-```text
-              Hotel Communication ●
-                                  ● Hotel Radio
-
-                   
-
-                                      ● Customer Support
-
-────────────────────────────────────────────→
-```
-
-Semantically similar texts tend to have more similar representations.
-
-In reality, the space may contain hundreds or thousands of dimensions.
-
----
-
-# 8. Token Embedding vs Retrieval Embedding
-
-Both are called embeddings, but their roles differ.
-
----
-
-## 8.1 Token Embedding
+### Token Embedding
 
 Used inside Transformer models.
 
 ```text
 Token
- ↓
-Embedding Representation
- ↓
-Transformer Layers
+↓
+Internal Representation
 ```
 
-Purpose:
+### Retrieval Embedding
 
-> Represent individual tokens inside the model.
-
----
-
-## 8.2 Retrieval / Text Embedding
-
-Used in RAG.
+Used for search.
 
 ```text
 Sentence / Chunk
- ↓
+↓
 Embedding Model
- ↓
+↓
 Vector
 ```
 
-Purpose:
-
-- semantic search
-- retrieval
-- similarity comparison
-- clustering
-
----
-
-## 8.3 Main Difference
+Main difference:
 
 ```text
 Token Embedding
-→ model-internal representation
+→ model internal representation
 
 Retrieval Embedding
-→ search / retrieval representation
+→ search representation
 ```
 
 ---
 
-# 9. Document Embedding vs Query Embedding
+# 6. Document vs Query Embedding
 
 During indexing:
 
 ```text
 Document Chunk
-      ↓
+↓
 Embedding Model
-      ↓
+↓
 Document Vector
 ```
 
-During user request:
+During a user request:
 
 ```text
-User Query
-     ↓
+Query
+↓
 Embedding Model
-     ↓
+↓
 Query Vector
 ```
 
-Then:
+Then compare:
 
 ```text
 Query Vector
-     ↓
-Compare
-     ↓
+vs
 Document Vectors
 ```
 
----
-
-## 9.1 Why Use the Same Compatible Embedding Model?
-
-Documents and queries must exist in compatible vector spaces.
-
-Bad example:
-
-```text
-Documents
-→ Embedding Model A
-
-Query
-→ Unrelated Embedding Model B
-```
-
-Even if both return 768-dimensional vectors, the dimensions do not necessarily represent the same learned space.
-
-Therefore:
-
-```text
-Documents + Queries
-→ compatible embedding model
-→ same semantic space
-```
+Documents and queries normally need compatible embedding models so they exist in the same semantic vector space.
 
 ---
 
-# 10. Similarity Search
+# 7. Similarity Search
 
-After obtaining:
-
-```text
-Query Vector Q
-```
-
-and:
+A common metric is **Cosine Similarity**.
 
 ```text
-Chunk Vector A
-Chunk Vector B
-Chunk Vector C
+similarity(Query Vector, Chunk Vector)
 ```
 
-the system calculates:
+The basic intuition:
 
-```text
-similarity(Q, A)
-similarity(Q, B)
-similarity(Q, C)
-```
+> Cosine similarity compares the direction of vectors.
 
-Then ranks them.
+Higher similarity usually means stronger semantic similarity.
 
----
-
-# 11. Cosine Similarity
-
-A common similarity metric is:
-
-```text
-Cosine Similarity
-```
-
-Formula:
-
-\[
-\cos(\theta)
-=
-\frac{A \cdot B}
-{\|A\|\|B\|}
-\]
-
-You do not need to memorize the derivation.
-
-The important intuition is:
-
-> Cosine similarity mainly measures how similar the directions of two vectors are.
-
----
-
-## 11.1 Simple Example
-
-```text
-A = [1, 1]
-B = [2, 2]
-```
-
-They have different lengths but the same direction.
-
-Therefore their cosine similarity is very high.
-
----
-
-## 11.2 Similarity Score Is Not Probability
-
-If:
+However:
 
 ```text
 similarity = 0.82
 ```
 
-this does **not** mean:
+does **not** mean:
 
 ```text
-82% probability the answer is correct
+82% probability of correctness
 ```
 
 Similarity is a ranking signal, not a calibrated probability.
 
-Its meaning depends on:
-
-- embedding model
-- dataset
-- query type
-- similarity metric
-- retrieval architecture
-
-Therefore avoid blindly writing:
-
-```python
-if score < 0.7:
-    reject()
-```
-
-Thresholds should be evaluated empirically.
-
 ---
 
-# 12. Semantic Search
+# 8. Semantic Search
 
-Semantic Search retrieves information based on meaning rather than exact keyword overlap.
+Semantic Search retrieves based on meaning rather than only exact keywords.
 
 Example:
 
@@ -872,178 +381,100 @@ Query:
 酒店员工无线通信
 
 Document:
-适用于宾馆工作人员使用的数字对讲系统
+适用于宾馆工作人员的数字对讲系统
 ```
 
-A keyword-only approach may struggle.
+A semantic retriever may still match them.
 
-Semantic search may recognize that:
+However, dense semantic retrieval can be weaker for:
 
-```text
-酒店 ≈ 宾馆
-员工 ≈ 工作人员
-无线通信 ≈ 数字对讲
-```
+- exact product IDs
+- model numbers
+- numerical values
+- rare technical terms
+
+Later systems may combine semantic search with keyword search or metadata filtering.
 
 ---
 
-# 13. Semantic Search Limitations
+# 9. Retrieval
 
-Semantic Search is powerful, but it is not ideal for every query.
-
-Possible weak cases:
+Basic retrieval:
 
 ```text
-Product model numbers
-Exact IDs
-Technical codes
-Exact numerical values
-Abbreviations
-Rare proper nouns
-```
-
-Example:
-
-```text
-P8668Ex
-P8668
-P8660
-```
-
-These identifiers may be semantically difficult to distinguish using dense embeddings alone.
-
-Therefore production retrieval systems may later combine:
-
-```text
-Dense Retrieval
-+
-Keyword / Sparse Retrieval
-+
-Metadata Filtering
-```
-
-This leads to concepts such as Hybrid Search.
-
-For Day 1, only understand that these methods exist.
-
----
-
-# 14. Retrieval Pipeline
-
-Basic dense retrieval:
-
-```text
-User Query
-     ↓
+Query
+↓
 Embedding
-     ↓
-Query Vector
-     ↓
+↓
 Similarity Search
-     ↓
+↓
 Ranking
-     ↓
-Top-K Chunks
+↓
+Top-K
 ```
 
-The Retriever's job ends here.
+Retriever output:
+
+```text
+Chunk A
+Chunk B
+Chunk C
+```
+
+The Retriever does **not** write the final answer.
+
+```text
+Retrieval
+= find evidence
+
+Generation
+= write answer
+```
 
 ---
 
-# 15. Relevance
+# 10. Relevant vs Answer-Bearing Chunk
 
-A chunk does not have a permanent relevance score.
+### Relevant Chunk
 
-Relevance depends on the query.
-
-More accurately:
-
-```text
-Relevance(query, chunk)
-```
-
-Example:
-
-For:
-
-```text
-"What product works well in hotels?"
-```
-
-a hotel solution chunk may rank highly.
-
-For:
-
-```text
-"What is Product X's frequency?"
-```
-
-the same hotel solution chunk may become irrelevant.
-
----
-
-# 16. Relevant Chunk vs Answer-Bearing Chunk
-
-## Relevant Chunk
-
-A chunk whose topic is related to the question.
+Related to the topic.
 
 Example:
 
 ```text
-Product X is a professional digital radio.
+Product X is a digital radio.
 ```
 
 Question:
 
 ```text
-What frequency does Product X support?
+What is Product X's frequency?
 ```
 
-The chunk is relevant.
+Relevant, but does not contain the answer.
 
-But it does not contain the answer.
+### Answer-Bearing Chunk
+
+Contains the actual evidence needed.
+
+```text
+Product X frequency: 400–470 MHz.
+```
+
+A good retriever should place answer-bearing chunks in Top-K.
 
 ---
 
-## Answer-Bearing Chunk
+# 11. Top-K
 
-A chunk that contains evidence required to answer the question.
+Top-K means returning the K highest-ranked chunks.
 
 Example:
 
 ```text
-Product X frequency range: 400–470 MHz.
-```
-
-This chunk is:
-
-```text
-Relevant
-+
-Answer-bearing
-```
-
-### Key Idea
-
-Retrieval quality should eventually evaluate whether **answer-bearing chunks** appear in Top-K.
-
----
-
-# 17. Top-K
-
-Top-K means:
-
-> Return the K highest-ranked chunks.
-
-Example:
-
-```text
-Chunk A  0.91
-Chunk B  0.84
-Chunk C  0.76
-Chunk D  0.45
-Chunk E  0.20
+1. Chunk A
+2. Chunk B
+3. Chunk C
 ```
 
 If:
@@ -1052,40 +483,21 @@ If:
 K = 3
 ```
 
-Retriever returns:
+the retriever returns all three.
+
+### K Too Small
 
 ```text
-A
-B
-C
+May miss correct evidence
 ```
 
----
-
-## 17.1 K Too Small
-
-Possible problem:
-
-```text
-Correct answer-bearing chunk
-may not enter Top-K
-```
-
-This lowers retrieval recall.
-
----
-
-## 17.2 K Too Large
-
-Possible problems:
+### K Too Large
 
 ```text
 Noise ↑
 Tokens ↑
-Cost ↑
 Latency ↑
 Conflicting information ↑
-LLM confusion ↑
 ```
 
 Therefore:
@@ -1096,102 +508,82 @@ Larger K ≠ Always Better
 
 ---
 
-# 18. Top-1 Does Not Mean "Good"
+# 12. Top-1 Does Not Mean "Good"
 
-Nearest-neighbor retrieval always ranks something first.
+Top-1 only means:
 
-Suppose the database does not contain the requested information.
+> Best result among available candidates.
 
-The system may still return:
-
-```text
-Rank 1
-Rank 2
-Rank 3
-```
-
-But:
+It does not guarantee:
 
 ```text
-Best available result
-≠
-Good evidence
+The result is relevant
+or
+The result contains enough evidence
 ```
 
-Analogy:
-
-```text
-Highest exam score = 32/100
-```
-
-Someone is still ranked first, but the score is still poor.
+Even when the knowledge base has no answer, the retriever can still rank something first.
 
 ---
 
-# 19. Unknown Queries
+# 13. Minimal Sufficient Context
 
-Suppose the user asks:
+Good RAG aims to provide:
+
+> The smallest amount of context that still contains all evidence needed to answer correctly.
+
+### Too Little
 
 ```text
-Can Product X operate underwater at 50 meters continuously?
+Power: 2W
 ```
 
-If the knowledge base contains no such information, the retriever may still return related Product X chunks.
-
-However:
+Missing:
 
 ```text
-related information
-≠
-sufficient evidence
+Which product?
 ```
 
-Therefore the system needs a fallback mechanism.
-
----
-
-# 20. Context Injection
-
-After retrieval:
+### Too Much
 
 ```text
-User Question
-+
-Top-K Original Chunks
+Product X
+Product Y
+Product Z
+Company history
+Support information
+...
 ```
 
-are placed into the LLM's current context.
-
-Example:
+Problems:
 
 ```text
-SYSTEM:
-You are the company's AI support assistant.
-Do not invent unsupported product facts.
-
-CONTEXT:
-
-[Source 1]
-Product X ...
-
-[Source 2]
-Hotel solution ...
-
-USER:
-What product is suitable for hotel employees?
+Noise
+Tokens
+Latency
+Confusion
 ```
 
-This is:
+Ideal:
 
 ```text
-Context Injection
+Product: X
+Power: 2W
+```
+
+Core principle:
+
+```text
+Good RAG
+≠ retrieve everything
+
+Good RAG
+= retrieve minimal sufficient evidence
 ```
 
 ---
 
-# 21. System Prompt vs Retrieved Context
-
-These have different roles.
+# 14. System Prompt vs RAG Context
 
 ## System Prompt
 
@@ -1202,16 +594,13 @@ Role
 Behavior
 Rules
 Policies
-Constraints
 ```
 
 Example:
 
 ```text
-Do not invent unsupported specifications.
+Do not invent unsupported facts.
 ```
-
----
 
 ## RAG Context
 
@@ -1220,17 +609,11 @@ Provides:
 ```text
 Facts
 Evidence
-Product information
-Company knowledge
+Product Information
+Company Knowledge
 ```
 
-Example:
-
-```text
-Product X supports 400–470 MHz.
-```
-
-### Key Distinction
+Key distinction:
 
 ```text
 System Prompt
@@ -1242,437 +625,173 @@ RAG Context
 
 ---
 
-# 22. Minimal Sufficient Context
-
-A good RAG system should aim for:
-
-> The smallest amount of context that still contains everything necessary to answer correctly.
-
----
-
-## 22.1 Too Little Context
-
-Example:
-
-```text
-Power: 2W
-```
-
-Problem:
-
-```text
-Which product?
-```
-
-This may be:
-
-```text
-Minimal
-but
-Not Sufficient
-```
-
----
-
-## 22.2 Too Much Context
-
-Example:
-
-```text
-Product X power
-Product Y power
-Product Z power
-Company history
-Support policy
-Solution pages
-...
-```
-
-The answer may be included, but:
-
-```text
-Noise ↑
-Tokens ↑
-Latency ↑
-Confusion risk ↑
-```
-
-This is:
-
-```text
-Sufficient
-but
-Not Minimal
-```
-
----
-
-## 22.3 Ideal
-
-```text
-Product: X
-Power: 2W
-```
-
-Contains enough identity and factual evidence.
-
-### Key Idea
-
-```text
-Good RAG
-≠
-Retrieve everything
-
-Good RAG
-=
-Retrieve minimal sufficient evidence
-```
-
----
-
-# 23. Why RAG Reduces Hallucination
+# 15. Why RAG Reduces Hallucination
 
 Without RAG:
 
 ```text
 Question
- ↓
-Model Parameters
- ↓
-Generation
+↓
+Model Memory
+↓
+Answer
 ```
-
-The model may rely heavily on uncertain internal knowledge.
 
 With RAG:
 
 ```text
 Question
- ↓
-Trusted External Evidence
- ↓
-LLM Context
- ↓
-Generation
-```
-
-This reduces reliance on uncertain model memory.
-
----
-
-# 24. Why RAG Cannot Eliminate Hallucination
-
-RAG itself introduces multiple possible failure points.
-
-```text
-Knowledge
- ↓
-Ingestion
- ↓
-Chunking
- ↓
-Embedding
- ↓
-Retrieval
- ↓
+↓
+Trusted Evidence
+↓
 Context
- ↓
-Generation
+↓
+Answer
 ```
 
-Any layer may fail.
+RAG reduces reliance on uncertain model memory.
+
+However, RAG cannot guarantee correctness.
 
 ---
 
-# 25. RAG Failure Types
+# 16. RAG Failure Types
 
-## 25.1 Knowledge Missing
+## Knowledge Missing
 
-The correct information does not exist in the knowledge source.
+Correct information does not exist in the source.
 
-```text
-No knowledge
-→ Retriever cannot retrieve it
-```
+## Ingestion Failure
 
----
+The source contains the information, but it was not imported.
 
-## 25.2 Knowledge Error
+## Chunking Failure
 
-The company source itself contains incorrect or outdated information.
+The information exists but is broken or loses context.
 
-RAG may faithfully retrieve and reproduce incorrect data.
+## Retrieval Failure
 
----
+The correct chunk exists but does not enter Top-K.
 
-## 25.3 Ingestion Failure
+## Context Construction Failure
 
-The source contains correct information, but the ingestion pipeline does not include it.
+The retriever finds the correct chunk, but it is not correctly sent to the LLM.
 
-```text
-Website ✓
-documents.jsonl ✗
-```
+## Generation Failure
+
+The LLM sees the correct evidence but still answers incorrectly.
 
 ---
 
-## 25.4 Chunking Failure
-
-The information exists in the normalized document but is broken or loses necessary context during chunking.
-
-Example:
-
-```text
-Chunk 1:
-Frequency: 400–
-
-Chunk 2:
-470 MHz
-```
-
----
-
-## 25.5 Retrieval Failure
-
-The correct chunk exists in the index but does not enter Top-K.
-
-```text
-Correct Chunk exists ✓
-Index contains it ✓
-Top-K misses it ✗
-```
-
----
-
-## 25.6 Context Construction Failure
-
-Retriever finds the correct chunk, but the backend does not correctly include it in the LLM request.
-
----
-
-## 25.7 Generation Failure
-
-The correct evidence exists in the LLM context, but the LLM still produces an incorrect answer.
-
-Example:
-
-```text
-Context:
-400–470 MHz
-
-LLM:
-403–470 MHz
-```
-
----
-
-# 26. Recommended RAG Debug Order
-
-When an answer is wrong, do **not immediately modify the prompt**.
-
-Debug in this order:
-
-```text
-1. Does the correct knowledge exist?
-            ↓
-2. Did ingestion capture it?
-            ↓
-3. Did chunking preserve it?
-            ↓
-4. Did the retriever find it?
-            ↓
-5. Did it enter the LLM context?
-            ↓
-6. Did the LLM use it correctly?
-```
-
-In short:
+## Recommended Debug Order
 
 ```text
 Knowledge
-→ Ingestion
-→ Chunk
-→ Retrieval
-→ Context
-→ Generation
+   ↓
+Ingestion
+   ↓
+Chunking
+   ↓
+Retrieval
+   ↓
+Context
+   ↓
+Generation
 ```
 
-### Key Engineering Principle
-
-> An incorrect RAG answer is not automatically a prompt problem.
+> A wrong RAG answer is not automatically a prompt problem.
 
 ---
 
-# 27. Fallback
+# 17. Fallback
 
-If evidence is insufficient, the system should avoid guessing.
-
-Example:
+If retrieved evidence is insufficient:
 
 ```text
-The available company information does not contain enough evidence to confirm this specification.
+Do not guess.
 ```
 
-Then optionally guide the user to:
+Instead:
 
 ```text
-Support
-Contact
-Official Product Page
+The available company information does not contain enough evidence to confirm this.
 ```
 
 For enterprise customer support:
 
 ```text
-Correct refusal
+Correct Refusal
 >
-Confident hallucination
+Confident Hallucination
 ```
 
 ---
 
-# 28. RAG vs System Prompt
+# 18. RAG vs Alternatives
 
 ## System Prompt
 
-Best for:
-
 ```text
-Behavior
-Policy
-Role
-Style
-Constraints
+Main purpose:
+Rules / Behavior
 ```
 
-Example:
+## Long Context
 
 ```text
-Do not invent unsupported facts.
+Main purpose:
+Input Capacity
 ```
 
 ## RAG
 
-Best for:
-
 ```text
-Product specifications
-Company information
-Solutions
-Support documentation
-Frequently changing facts
+Main purpose:
+Knowledge Selection + Grounding
 ```
-
-### Summary
-
-```text
-System Prompt
-= Rules
-
-RAG
-= Facts
-```
-
----
-
-# 29. RAG vs Long Context
-
-Long Context answers:
-
-> How much information can the model receive?
-
-RAG answers:
-
-> Which information should the model receive for this query?
-
-Therefore:
-
-```text
-Long Context
-= Capacity
-
-RAG
-= Selection
-```
-
-They can work together.
-
-```text
-Knowledge Base
- ↓
-RAG
- ↓
-Relevant Documents
- ↓
-Long-Context LLM
-```
-
----
-
-# 30. Why Not Put All Company Knowledge in the Prompt?
-
-Possible issues:
-
-```text
-Input tokens ↑
-Cost ↑
-Latency ↑
-Context noise ↑
-Conflicting facts ↑
-Maintenance difficulty ↑
-```
-
-The goal is not:
-
-```text
-Give the model all available knowledge.
-```
-
-The goal is:
-
-```text
-Give the model the knowledge required for this question.
-```
-
----
-
-# 31. RAG vs Fine-Tuning
-
-## RAG
-
-```text
-External Knowledge
-      ↓
-Retrieval
-      ↓
-Current Context
-```
-
-RAG changes:
-
-```text
-model input
-```
-
----
 
 ## Fine-Tuning
 
 ```text
-Training Examples
-      ↓
+Main purpose:
+Parameter / Behavior Adaptation
+```
+
+Key summary:
+
+```text
+System Prompt = rules
+
+Long Context = capacity
+
+RAG = knowledge selection
+
+Fine-tuning = parameter adaptation
+```
+
+---
+
+# 19. RAG vs Fine-Tuning
+
+RAG:
+
+```text
+External Knowledge
+↓
+Current Context
+```
+
+Fine-tuning:
+
+```text
+Training Data
+↓
 Gradient Updates
-      ↓
+↓
 Model Parameters
 ```
 
-Fine-tuning changes:
-
-```text
-model parameters
-```
-
-### Core Difference
+Therefore:
 
 ```text
 RAG
@@ -1682,122 +801,21 @@ Fine-tuning
 = changes parameters
 ```
 
----
-
-# 32. When RAG Is Usually Better
-
-RAG is especially useful for:
-
-- changing product information
-- internal company documents
-- product specifications
-- company policies
-- technical support documentation
-- source citation
-- private knowledge
-- frequently updated knowledge
+Frequently changing company facts are generally better suited to RAG.
 
 ---
 
-# 33. When Fine-Tuning Is Usually Better
+# 20. Vector Database
 
-Fine-tuning may be more useful for:
-
-- consistent behavior patterns
-- specialized task execution
-- output formatting
-- classification behavior
-- domain-specific writing style
-- repeated structured tasks
-
----
-
-# 34. RAG and Fine-Tuning Can Work Together
-
-Example:
+A Vector Database / Vector Index:
 
 ```text
-Fine-Tuned Model
-→ customer-service behavior
-
+stores vectors
 +
-
-RAG
-→ current company knowledge
+searches nearby vectors efficiently
 ```
 
-Conceptually:
-
-```text
-Fine-tuning
-→ How the model tends to behave
-
-RAG
-→ What facts the model should use now
-```
-
----
-
-# 35. Architecture Comparison
-
-| Method | Main Purpose |
-|---|---|
-| System Prompt | Rules / behavior |
-| Long Context | Input capacity |
-| RAG | Knowledge selection and grounding |
-| Fine-tuning | Parameter / behavior adaptation |
-
----
-
-# 36. Separation of Concerns
-
-A maintainable RAG architecture separates responsibilities.
-
-```text
-System Prompt
-→ Policy
-
-Knowledge Base
-→ Facts
-
-Retriever
-→ Evidence Selection
-
-LLM
-→ Language Generation
-```
-
-Therefore:
-
-```text
-Wrong policy
-→ modify prompt
-
-Wrong fact
-→ modify knowledge
-
-Wrong evidence
-→ debug retriever
-
-Wrong final wording/fact use
-→ debug generation
-```
-
----
-
-# 37. Vector Database
-
-A Vector Database / Vector Index is responsible for:
-
-```text
-Store vectors
-+
-Search nearest vectors efficiently
-```
-
-It does **not** create embeddings.
-
-Compare:
+It does not create embeddings.
 
 ```text
 Embedding Model
@@ -1807,17 +825,11 @@ Vector Database
 → Store / Search Vectors
 ```
 
-### Important
-
-```text
-Embedding Model ≠ Vector Database
-```
-
 ---
 
-# 38. Basic RAG Data Record
+# 21. Basic RAG Data Record
 
-Conceptually, a stored chunk may contain:
+A chunk may conceptually contain:
 
 ```json
 {
@@ -1839,33 +851,33 @@ vector
 → retrieval
 
 text
-→ LLM evidence
+→ evidence
 
 metadata
-→ filtering / debugging / citation
+→ filtering / citation / debugging
 ```
 
 ---
 
-# 39. Evaluation Foundations
+# 22. Evaluation Foundations
 
-Before building RAG, establish a baseline.
+Before RAG:
 
 ```text
 Frozen Questions
-      ↓
+↓
 V0 Direct LLM
-      ↓
-Results
+↓
+Baseline Results
 ```
 
-After building RAG:
+After RAG:
 
 ```text
-Same Frozen Questions
-      ↓
+Same Questions
+↓
 V1 RAG
-      ↓
+↓
 Results
 ```
 
@@ -1875,111 +887,25 @@ Then compare:
 V0 vs V1
 ```
 
----
+Ground truth should come from trusted company sources, not from the LLM being evaluated.
 
-# 40. Ground Truth
+Basic metrics:
 
-Ground Truth should come from trusted company sources.
+- Correctness
+- Hallucination
+- Appropriate Refusal
 
-Not from the model being tested.
+Later retrieval metrics:
 
-Correct:
-
-```text
-Company Source
-     ↓
-Expected Answer
-```
-
-Incorrect:
-
-```text
-LLM Answer
-     ↓
-Expected Answer
-```
+- Hit@K
+- Recall@K
 
 ---
 
-# 41. Basic V0 Metrics
-
-For the first baseline, useful metrics include:
-
-## Correctness
+# 23. Complete Mental Model
 
 ```text
-Is the answer factually correct?
-```
-
-## Hallucination
-
-```text
-Did the model introduce unsupported company facts?
-```
-
-## Appropriate Refusal
-
-For an unanswerable question:
-
-```text
-Did the model correctly refuse instead of guessing?
-```
-
----
-
-# 42. Retrieval Metrics Preview
-
-These will be studied more deeply later.
-
-## Hit@K
-
-Did at least one correct answer-bearing chunk appear in Top-K?
-
-Example:
-
-```text
-Expected Chunk = G
-
-Top-3:
-A
-G
-C
-```
-
-Then:
-
-```text
-Hit@3 = Yes
-```
-
----
-
-## Recall@K
-
-If multiple chunks are required:
-
-```text
-Expected:
-A B C
-
-Retrieved:
-A C D E
-```
-
-Then:
-
-```text
-Recall = 2 / 3
-```
-
-For Day 1, only understand the intuition.
-
----
-
-# 43. Complete RAG Mental Model
-
-```text
-                     OFFLINE
+                    OFFLINE
 
 Company Knowledge
        ↓
@@ -1987,152 +913,90 @@ Preprocessing
        ↓
 Chunking
        ↓
-Chunks
-       ↓
-Embedding Model
-       ↓
-Chunk Vectors
+Embeddings
        ↓
 Vector Index
        │
        │
-       └────────────────────┐
-                            │
-                            ↓
-                         ONLINE
+       └───────────────┐
+                       ↓
+                    ONLINE
 
 User Query
        ↓
 Query Embedding
        ↓
-Query Vector
-       ↓
-Similarity Search ← Vector Index
-       ↓
-Ranking
+Similarity Search
        ↓
 Top-K
        ↓
-Answer-Bearing Chunks
-       ↓
-Retrieve Original Text
+Original Text
        ↓
 Minimal Sufficient Context
        ↓
 LLM
        ↓
 Grounded Answer
-       ↓
-Sources
 ```
 
 ---
 
-# 44. Eight Core Statements
+# 24. Eight Core Statements
 
-If most details are forgotten later, remember these:
-
-1. **LLMs do not automatically access company knowledge.**
-
-2. **RAG retrieves external knowledge at inference time.**
-
-3. **Indexing prepares knowledge; retrieval selects knowledge.**
-
-4. **Embeddings represent semantic information as vectors.**
-
-5. **Similarity search ranks chunks relative to the current query.**
-
-6. **Vectors are used to find knowledge; original text provides factual evidence.**
-
-7. **Retrieval finds evidence; the LLM generates the answer.**
-
-8. **Good RAG aims for minimal sufficient context.**
+1. LLMs do not automatically access company knowledge.
+2. RAG retrieves external knowledge at inference time.
+3. Indexing prepares knowledge; retrieval selects knowledge.
+4. Embeddings represent semantic information as vectors.
+5. Similarity search ranks chunks relative to the query.
+6. Vectors find knowledge; original text provides factual evidence.
+7. Retrieval finds evidence; the LLM generates the answer.
+8. Good RAG aims for minimal sufficient context.
 
 ---
 
-# 45. Common Misconceptions
+# 25. Day 1 Final Summary
 
-## Misconception 1
+A basic LLM system:
 
 ```text
-RAG teaches new knowledge to the model.
+User
+↓
+LLM
+↓
+Answer
 ```
 
-Wrong.
-
-RAG normally provides external knowledge through context during inference.
-
----
-
-## Misconception 2
+A basic RAG system:
 
 ```text
-Higher similarity means higher probability of correctness.
+User
+↓
+Retriever
+↓
+Relevant Knowledge
+↓
+Context
+↓
+LLM
+↓
+Grounded Answer
 ```
 
-Wrong.
-
-Similarity is a ranking signal, not calibrated correctness probability.
-
----
-
-## Misconception 3
+The goal of RAG is not simply:
 
 ```text
-Top-1 means the result is good.
+give the LLM more information
 ```
 
-Wrong.
-
-Top-1 only means it is the best result among available candidates.
-
----
-
-## Misconception 4
+but:
 
 ```text
-Higher K is always better.
+give the right evidence
+at the right time
+in the right amount
 ```
 
-Wrong.
-
-Higher K may improve recall but increase noise, cost, and confusion.
-
----
-
-## Misconception 5
-
-```text
-Embedding replaces original text.
-```
-
-Wrong.
-
-Embedding helps find the text. The original text still provides the evidence.
-
----
-
-## Misconception 6
-
-```text
-RAG completely eliminates hallucination.
-```
-
-Wrong.
-
-RAG introduces several possible failure stages and cannot guarantee correctness.
-
----
-
-## Misconception 7
-
-```text
-A wrong RAG answer means the prompt is bad.
-```
-
-Wrong.
-
-Always debug:
+The most important debugging principle:
 
 ```text
 Knowledge
@@ -2143,73 +1007,5 @@ Knowledge
 → Generation
 ```
 
----
-
-# 46. Day 1 Final Summary
-
-A basic LLM application is:
-
-```text
-User
- ↓
-LLM
- ↓
-Answer
-```
-
-A basic RAG application becomes:
-
-```text
-User
- ↓
-Retriever
- ↓
-External Knowledge
- ↓
-Relevant Chunks
- ↓
-Context
- ↓
-LLM
- ↓
-Grounded Answer
-```
-
-The central engineering goal is not merely:
-
-```text
-make the LLM smarter
-```
-
-but:
-
-```text
-provide the right evidence
-at the right time
-in the right amount
-```
-
-A strong RAG system therefore depends on the entire pipeline:
-
-```text
-Knowledge Quality
-+
-Document Representation
-+
-Chunking
-+
-Embeddings
-+
-Retrieval
-+
-Context Construction
-+
-Generation
-+
-Evaluation
-```
-
-The most important Day 1 lesson:
-
-> **RAG is not just "LLM + Vector Database." It is a knowledge retrieval and grounding architecture whose quality depends on every stage between raw company knowledge and the final answer.**
+> RAG is not simply "LLM + Vector Database." It is a knowledge retrieval and grounding architecture.
 ````
