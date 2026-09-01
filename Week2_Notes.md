@@ -1,4 +1,3 @@
-```markdown
 # Day 2 — Knowledge Ingestion: One-Sentence Notes
 
 ## Step 1 — Knowledge Sources & Document Boundaries
@@ -78,9 +77,8 @@ Knowledge Ingestion 的本质不是“把网站内容复制出来”，而是：
 最终原则：
 
 **Trusted Facts → Structured Knowledge → Validated Artifact**
-```
 
-```markdown
+
 # Day 3 — Chunking Strategy: One-Sentence Notes
 
 ## Step 1 — Document vs Chunk
@@ -156,4 +154,151 @@ Chunking 的本质不是“把文字切短”，而是：
 **Document = Knowledge Entity**
 
 **Chunk = Retrieval Unit**
-```
+
+
+# Day 4 — Embedding + Semantic Retrieval: One-Sentence Notes
+
+## Step 1 — Embedding Mental Model
+
+> **Embedding maps text into a shared vector space where semantic relationships can be compared numerically.**
+
+Embedding 的本质是把文本转换成用于语义比较的 Vector；Vector 用来寻找 Evidence，而 Original Chunk Text 才是真正的事实证据。
+
+---
+
+## Step 2 — Offline Chunk Embedding
+
+> **Knowledge chunks are embedded during indexing and reused until either their content or the embedding-space configuration changes.**
+
+Chunk Embedding 通常在 Offline Indexing 阶段提前生成，并通过 `chunk_id + content_hash + embedding configuration` 判断已有 Vector 是否可以复用。
+
+核心变化处理：
+
+**Unchanged → Reuse · Changed → Re-embed · New → Embed · Deleted → Remove**
+
+---
+
+## Step 3 — Query Embedding & Shared Embedding Space
+
+> **Semantic retrieval works because queries and knowledge chunks are encoded into a compatible retrieval space where geometric similarity represents how well a chunk matches the query’s information need.**
+
+Query 和 Chunk 能够比较，不是因为文字必须相同，而是因为它们被映射到 Compatible Embedding Space 中，使用户的信息需求可以和 Knowledge Evidence 进行几何比较。
+
+核心原则：
+
+**Same Dimensions ≠ Compatible Embedding Space**
+
+---
+
+## Step 4 — Cosine Similarity & Top-K
+
+> **Semantic search ranks chunks by vector similarity and returns the Top-K nearest candidates, but nearest does not necessarily mean relevant, answer-bearing, or correct.**
+
+Cosine Similarity 主要比较 Vector Direction，并据此对所有 Chunk 排名；Top-K 决定最终有多少 Retrieval Candidates 可以进入下一阶段。
+
+需要牢记：
+
+**Similarity Score ≠ Probability**
+
+**Nearest ≠ Relevant**
+
+**Relevant ≠ Answer-bearing**
+
+---
+
+## Step 5 — Retrieval Evaluation & Debugging
+
+> **Retrieval quality should be measured by whether the correct answer-bearing evidence consistently appears near the top of the ranking, not by how high the similarity scores look.**
+
+Retriever 的质量应该通过 Ground Truth 与实际 Top-K 结果比较，而不是观察 Similarity Score 是否“看起来很高”。
+
+核心指标：
+
+- **Hit@K** — Top-K 中是否至少找到一个正确 Evidence
+- **Recall@K** — 所需 Evidence 被找回了多少
+- **First Relevant Rank** — 第一个 Answer-bearing Evidence 排在第几位
+
+核心目标：
+
+**High Answer-Bearing Evidence Recall at a Small, Low-Noise K**
+
+---
+
+## Step 6 — Exact Entity Handling
+
+> **Exact entity handling supplies high-precision identity signals, while dense retrieval supplies semantic intent signals; combining them improves model-specific queries without sacrificing broader retrieval recall.**
+
+Exact Entity Handling 负责高精度判断“用户明确在说谁”，Dense Retrieval 负责理解“用户想知道什么”。
+
+二者的分工可以简化为：
+
+**Exact Entity → Who**
+
+**Dense Retrieval → What**
+
+因此 V1 使用：
+
+**Entity-Prioritized Candidates + Dense Ranking / Fill**
+
+而不是严格 Entity Filter。
+
+---
+
+## Step 7 — Vector Index & Retrieval Acceptance
+
+> **A vector index optimizes how efficiently nearest neighbors are found at scale; it does not improve the knowledge, chunking, embeddings, or semantic quality of retrieval itself.**
+
+NumPy Exact Search、FAISS 和 Vector Store 的主要区别在于 Vector 的存储、索引与搜索效率，而不是改变 Semantic Retrieval 的基本原理。
+
+当前 V1：
+
+**NumPy Exact Search → simple, transparent, exact**
+
+未来规模增长后：
+
+**FAISS / Vector Index → optimize nearest-neighbor search**
+
+Vector Index 优化的是 Search Execution，而不是 Retrieval Semantics。
+
+---
+
+# Day 4 Core Mental Model
+
+> **Semantic retrieval converts queries and knowledge chunks into a compatible vector space, ranks chunks by semantic proximity plus reliable exact signals, and returns a small set of answer-bearing evidence candidates.**
+
+Semantic Retrieval 的核心流程：
+
+**Chunk → Embedding → Chunk Vector**
+
+**Query → Embedding → Query Vector**
+
+然后：
+
+**Query Vector + Chunk Vectors → Similarity → Ranking → Top-K**
+
+Exact Entity Handling 提供额外的 Identity Signal：
+
+**Exact Signal → Who**
+
+**Semantic Signal → What**
+
+最终原则：
+
+**Embedding determines how knowledge is represented.**
+
+**Similarity determines how vectors are compared.**
+
+**Exact Entity Handling protects identity precision.**
+
+**Top-K determines which evidence survives retrieval.**
+
+**Vector Index determines how efficiently retrieval executes at scale.**
+
+最终输出：
+
+**Query → Top-K Answer-Bearing Evidence Candidates**
+
+Day 4 到这里停止：
+
+**Retrieval ≠ Generation**
+
