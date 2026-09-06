@@ -302,3 +302,611 @@ Day 4 到这里停止：
 
 **Retrieval ≠ Generation**
 
+# Day 5 — RAG Generation Integration: One-Sentence Notes
+
+## Step 1 — Retrieval vs Conversation History
+
+> **Retrieval should search for evidence using the user’s current information need, while conversation history should help the generator interpret that evidence in context.**
+
+V1 中 Retriever 只使用最后一条 User Message 进行检索，而有限 Conversation History 交给 LLM 理解多轮语境，避免历史内容污染当前 Retrieval Query。
+
+核心分工：
+
+**Latest User Message → Retrieval**
+
+**Bounded Conversation History → Generation Context**
+
+---
+
+## Step 2 — RAG Layering
+
+> **Keep retrieval, context construction, prompt construction, and generation as separate layers so each stage has one clear responsibility.**
+
+V1 使用轻量分层：
+
+**Retriever → Context Builder → Prompt Builder → LLM → Stream**
+
+Retriever 负责找 Evidence，Context Builder 负责组织 Evidence，Prompt Builder 负责定义 LLM 应该如何使用 Evidence，而路由层只负责 orchestration。
+
+---
+
+## Step 3 — Retrieved Context as Evidence
+
+> **Retrieved knowledge is untrusted evidence for answering the user, not instructions that can redefine system behavior.**
+
+Retrieved Chunk 应该作为独立的 `CONTEXT` 输入，而不是直接拼入 System Prompt，更不能让 Knowledge Base 中的文字覆盖系统身份、安全规则或回答边界。
+
+核心 Trust Boundary：
+
+**System Instructions > Retrieved Evidence > User Request**
+
+---
+
+## Step 4 — Grounded Generation
+
+> **The generator should answer from retrieved evidence when evidence exists, and explicitly abstain when the available evidence is insufficient.**
+
+RAG 的目标不是让 LLM “知道更多”，而是限制 LLM：
+
+**Evidence Available → Grounded Answer**
+
+**Evidence Insufficient → Explicit Abstention**
+
+不能用模型自身知识补全公司事实、产品参数、库存、价格、资质或其他未提供的信息。
+
+---
+
+## Step 5 — Prompt Responsibility
+
+> **The prompt should define stable reasoning and grounding rules, while factual company knowledge should remain in the retrieved context rather than being duplicated into system instructions.**
+
+System Prompt 负责：
+
+**Identity + Trust Rules + Grounding + Safety + Fallback**
+
+Retrieved Context 负责：
+
+**Company Facts + Product Facts + Solution Facts + Support Facts**
+
+Prompt 不应该变成第二个 Knowledge Base。
+
+---
+
+## Step 6 — Streaming RAG Integration
+
+> **RAG changes how evidence is prepared before generation, but it does not require changing the existing HTTP streaming contract.**
+
+V1 保留已有：
+
+**POST `/api/chat-stream`**
+
+和：
+
+**NDJSON: `delta → ... → done/error`**
+
+RAG 只插入 Generation 前：
+
+**User Query → Retrieval → Context → Prompt**
+
+而不改变前端已经依赖的 Streaming Protocol。
+
+---
+
+## Step 7 — Production Boundaries
+
+> **A minimal production RAG system should add only the components required to improve grounding, while postponing complexity that has not yet been justified by evidence.**
+
+V1 明确不加入：
+
+* Query Rewriting
+* Reranker
+* Hybrid Search
+* BM25
+* Vector Database
+* Multi-Agent Workflow
+* LangChain / LangGraph
+
+先验证：
+
+**Simple Retrieval + Good Evidence + Strong Grounding**
+
+是否已经足够。
+
+---
+
+# Day 5 Core Mental Model
+
+> **RAG generation is the controlled handoff from retrieved evidence to the LLM, with strict separation between instructions, evidence, conversation context, and generation.**
+
+Day 5 的核心链路：
+
+**Latest User Message**
+
+↓
+
+**Retriever**
+
+↓
+
+**Top-K Evidence**
+
+↓
+
+**Context Builder**
+
+↓
+
+**Prompt Builder + Conversation History**
+
+↓
+
+**LLM**
+
+↓
+
+**NDJSON Streaming**
+
+核心分工：
+
+**Retriever decides what evidence enters.**
+
+**Context Builder decides how evidence is represented.**
+
+**Prompt decides how evidence may be used.**
+
+**LLM converts evidence into a user-facing answer.**
+
+最终原则：
+
+**Retrieve Facts → Constrain Generation → Stream Grounded Answer**
+
+---
+
+# Day 6 — RAG Evaluation: One-Sentence Notes
+
+## Step 1 — Evaluation Contract
+
+> **A RAG system should be evaluated against explicit ground truth and acceptance criteria defined before inspecting its outputs.**
+
+Evaluation 不能先看结果再决定什么叫“正确”，而应该提前定义：
+
+**Query + Expected Evidence + Expected Behavior + Acceptance Rule**
+
+从而避免人为根据模型输出修改评分标准。
+
+---
+
+## Step 2 — Evaluation Dataset Design
+
+> **A useful evaluation dataset should represent real information needs, difficult boundaries, unknown questions, and failure modes rather than merely generating easy questions from existing chunks.**
+
+Evaluation Query 不应该由 Chunk 机械反推，否则会天然偏向 Retriever。
+
+数据集应该覆盖：
+
+**Entity Questions + Parameter Questions + Recommendations + Solutions + Support + Company Facts + Unknowns**
+
+并主动加入歧义、边界和容易混淆的 Case。
+
+---
+
+## Step 3 — Ground Truth Completeness
+
+> **Ground truth should identify every chunk that can independently or jointly provide the required evidence, not just one convenient expected chunk.**
+
+如果多个 Chunk 都能完整支持答案，它们都应该进入 Ground Truth。
+
+否则：
+
+```text
+Retriever 找到了正确 Evidence
+≠
+Evaluation 一定判正确
+```
+
+Ground Truth 的质量决定 Metric 是否可信。
+
+---
+
+## Step 4 — Retrieval Metrics
+
+> **Retrieval evaluation measures whether answer-bearing evidence appears early and reliably, not whether similarity scores are numerically high.**
+
+核心指标：
+
+* **Hit@K** — Top-K 是否至少出现正确 Evidence
+* **Recall@K** — 所有标注 Evidence 被找回多少
+* **First Relevant Rank** — 第一个 Relevant Chunk 在哪里
+* **MRR** — Relevant Evidence 是否持续靠前
+
+即使：
+
+**Hit@5 = 100%**
+
+如果正确 Evidence 总在 Rank 4–5，Retriever 仍然可能排序较弱。
+
+---
+
+## Step 5 — Generation Evaluation
+
+> **Generation quality should be evaluated separately from retrieval quality because correct evidence can still produce a wrong answer, and weak retrieval can sometimes accidentally produce a plausible answer.**
+
+Generation 应至少检查：
+
+**Correctness**
+
+**Groundedness**
+
+**Completeness**
+
+**Refusal Behavior**
+
+**Hallucination**
+
+因此：
+
+**Retrieval Success ≠ Generation Success**
+
+必须分别测量。
+
+---
+
+## Step 6 — Unknown & Abstention Evaluation
+
+> **Unknown questions are first-class evaluation cases because a trustworthy RAG system must know when its evidence is insufficient.**
+
+对于 Knowledge Base 不支持的问题：
+
+**Correct Behavior = Refuse / Cannot Confirm**
+
+而不是：
+
+**Retrieve Similar Chunk → Guess an Answer**
+
+Unknown Cases 是检验 Hallucination Control 的重要部分。
+
+---
+
+## Step 7 — Failure Analysis & Acceptance
+
+> **Evaluation is valuable only when failures can be attributed to a specific stage and translated into a bounded engineering change.**
+
+失败应该被归因到：
+
+```text
+Source
+Chunking
+Embedding
+Retrieval Ranking
+Context Construction
+Prompt Semantics
+Generation
+Evaluation Label
+```
+
+而不是简单归因：
+
+```text
+“LLM 不够好”
+```
+
+Release Gate 应依据预定义指标和人工语义检查，而不是单个漂亮的 Demo。
+
+---
+
+# Day 6 Core Mental Model
+
+> **RAG evaluation separates retrieval quality from generation quality and measures both against predefined, evidence-backed ground truth.**
+
+Evaluation 的核心链路：
+
+**Realistic Queries**
+
+↓
+
+**Ground Truth**
+
+↓
+
+**Retriever Output**
+
+↓
+
+**Retrieval Metrics**
+
+↓
+
+**Generated Answer**
+
+↓
+
+**Correctness + Groundedness + Refusal**
+
+↓
+
+**Failure Attribution**
+
+核心公式：
+
+**Good RAG = Good Retrieval × Good Generation**
+
+而不是：
+
+**Good RAG = High Similarity Score**
+
+最终原则：
+
+**Define First → Run → Measure → Diagnose → Improve**
+
+而不是：
+
+**Run → Look at Answers → Redefine Success**
+
+---
+
+# Day 7 — RAG Hardening & Production Readiness: One-Sentence Notes
+
+## Step 1 — Scope Freeze
+
+> **Before hardening a release candidate, freeze the architecture and acceptance scope so failures lead to bounded fixes rather than uncontrolled redesign.**
+
+Day 7 不再随意加入新架构，而是固定：
+
+**Retriever + Context Builder + Prompt Builder + DeepSeek + NDJSON**
+
+之后只修复能够被证据证明的问题。
+
+---
+
+## Step 2 — Source Integrity Repair
+
+> **When evaluation exposes a factual defect, repair the authoritative source and rebuild downstream artifacts instead of patching generated documents, chunks, or answers.**
+
+例如参数标签错误必须从：
+
+**Knowledge Source**
+
+开始修复，然后重新经过：
+
+**Source → Documents → Chunks → Vectors**
+
+不能直接修改 Chunk 或 Prompt 来掩盖 Source Error。
+
+---
+
+## Step 3 — Knowledge Update Workflow
+
+> **A production knowledge update should build and validate the complete snapshot before activation, while reusing unchanged embeddings only when their identity, content, and embedding configuration still match.**
+
+统一 workflow：
+
+**Source**
+
+↓
+
+**Staged Documents**
+
+↓
+
+**Staged Chunks**
+
+↓
+
+**Embedding Plan**
+
+↓
+
+**Reuse / Re-embed**
+
+↓
+
+**Complete Snapshot Validation**
+
+↓
+
+**Activation**
+
+核心 reuse rule：
+
+**Unchanged → Reuse**
+
+**Changed → Re-embed**
+
+**New → Embed**
+
+**Deleted → Remove**
+
+---
+
+## Step 4 — Regression, Latency & Prompt Semantics
+
+> **Hardening should distinguish retrieval defects from prompt-policy defects and fix the smallest layer responsible for the observed failure.**
+
+Day 7 发现有些失败不是 Retrieval 问题，而是 LLM 对业务语义的错误推断，例如：
+
+**Product Exists ≠ Manufacturer**
+
+**Product Exists ≠ Supplier**
+
+**Product Exists ≠ Stock Available**
+
+因此需要修复 Prompt Semantics，而不是错误地修改 Chunking 或 Retrieval。
+
+同时确认：
+
+**Retrieval latency ≈ small**
+
+**LLM generation remains the dominant request cost**
+
+---
+
+## Step 5A — New Holdout Design
+
+> **A new holdout should contain genuinely unseen, independently authored cases that test the frozen system’s boundaries rather than repeating previously optimized examples.**
+
+Holdout 应在系统冻结后建立，并覆盖：
+
+* Product parameters
+* Cross-field reasoning
+* Recommendation
+* Solution knowledge
+* Company facts
+* Closed-world facts
+* Dynamic unknowns
+* Abstention boundaries
+
+一旦运行：
+
+**Holdout → Seen Evidence**
+
+之后不能再把它当作真正 Unseen Test Set。
+
+---
+
+## Step 5B — Sealed Holdout Evaluation
+
+> **A sealed holdout is valuable only when it is run once against the frozen candidate and its original results are preserved without rerunning until they look better.**
+
+Day 7 的 Holdout 原始 rubric 结果必须保留。
+
+Owner 后续可以做 Business Acceptance Review，但不能：
+
+```text
+看到失败
+→ 改 Prompt
+→ 重跑同一 Holdout
+→ 宣称仍然 Unseen
+```
+
+核心原则：
+
+**Historical Result ≠ Retroactively Rewritten Result**
+
+---
+
+## Step 6 — Release Candidate Smoke
+
+> **A release candidate is production-ready only when code, knowledge artifacts, retrieval behavior, API contracts, streaming, error handling, and representative end-to-end cases all pass together.**
+
+最终 Smoke 覆盖：
+
+**Tests**
+
+**Snapshot Integrity**
+
+**Retriever**
+
+**Prompt**
+
+**Generation**
+
+**HTTP Contract**
+
+**NDJSON Streaming**
+
+**Request ID**
+
+**Unknown Refusal**
+
+**Latency**
+
+只有完整链路通过，才能从：
+
+**Development Candidate**
+
+升级为：
+
+**Release Candidate**
+
+---
+
+# Day 7 Core Mental Model
+
+> **Production hardening turns a working RAG prototype into an evidence-backed release candidate by freezing scope, repairing root causes, validating the full knowledge lifecycle, and testing the complete system under realistic boundaries.**
+
+Day 7 的核心过程：
+
+**Freeze**
+
+↓
+
+**Find Failure**
+
+↓
+
+**Locate Root Cause**
+
+↓
+
+**Fix the Correct Layer**
+
+↓
+
+**Rebuild / Validate**
+
+↓
+
+**Regression**
+
+↓
+
+**Unseen Holdout**
+
+↓
+
+**Release Smoke**
+
+↓
+
+**Release Candidate**
+
+核心原则：
+
+**Source Error → Fix Source**
+
+**Retrieval Error → Fix Retrieval**
+
+**Prompt Semantics Error → Fix Prompt**
+
+**Evaluation Error → Fix Evaluation**
+
+不要：
+
+**One Failure → Redesign Everything**
+
+最终 Production Knowledge Lifecycle：
+
+**Authoritative Source**
+
+↓
+
+**Validated Documents**
+
+↓
+
+**Validated Chunks**
+
+↓
+
+**Validated Vectors**
+
+↓
+
+**Validated Retrieval**
+
+↓
+
+**Grounded Generation**
+
+↓
+
+**Production Deployment**
+
+Day 7 的最终目标不是“让所有测试看起来通过”，而是：
+
+> **Know exactly what the system can do, what it cannot do, why it fails, and whether the tested release is safe enough to deploy.**
+
+最终状态：
+
+**RAG V1.1 → Evidence-Backed Release Candidate → Production**
+
