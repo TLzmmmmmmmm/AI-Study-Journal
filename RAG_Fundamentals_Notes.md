@@ -1,4 +1,3 @@
-````markdown
 # RAG Fundamentals Notes
 
 > Week 2 · Day 1  
@@ -1008,4 +1007,3 @@ Knowledge
 ```
 
 > RAG is not simply "LLM + Vector Database." It is a knowledge retrieval and grounding architecture.
-````
