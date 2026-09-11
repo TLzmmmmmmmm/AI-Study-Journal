@@ -412,3 +412,259 @@ Citation 问题属于独立的 Trust / Presentation Quality，不改变 Day 3 `f
 
 **LLM owns the answer text · Backend owns the sources · Citation follows evidence**
 
+# Day 5 — LangGraph Orchestration & Production Migration: One-Sentence Notes
+
+## Step 1 — LangGraph Mental Model
+
+> **LangGraph makes orchestration explicit by representing a workflow as state transitions across nodes connected by edges instead of hiding control flow inside nested `if` statements and `while` loops.**
+
+LangGraph 不替代 Router、RAG、Tool 或 LLM，而是把原本隐含在 Python Control Flow 中的 **When · What Next · Branch · Loop · Stop** 显式表示成 Graph。
+
+---
+
+## Step 2 — State vs Dependencies
+
+> **Graph State stores request-scoped data that must survive across node boundaries, while dependencies are shared capabilities that nodes use to perform work.**
+
+State 应只保存 Workflow 执行过程中需要跨 Node 传递的数据，例如：
+
+**Messages · Route Decision · Retrieval Hits · Tool Call · Tool Traces · Pending Failures · Answer**
+
+而：
+
+**Router · Retriever · ToolExecutor · `complete_chat`**
+
+属于 Dependencies，不应该放进 State。
+
+没有 Reducer 时，Node 返回的是 **Partial State Update**，同名字段采用 overwrite；可变 `list` / `dict` 应使用 copy-on-write，而不是直接修改旧 State。
+
+---
+
+## Step 3 — Node, Edge & Conditional Edge
+
+> **A Node performs one meaningful workflow step, an Edge defines a fixed transition, and a Conditional Edge chooses the next step from the current state.**
+
+Graph 不应该把每个 Python Function 都变成 Node，而应围绕有独立 Workflow 意义的步骤建模：
+
+**Route · Retrieve · Generate · Agent Step · Execute Tool · Finalize**
+
+其中：
+
+**Edge = Always Go Next**
+
+**Conditional Edge = Inspect State → Choose Next Node**
+
+Tool Observation 本身是 State Data，而不是独立 Node。
+
+---
+
+## Step 4 — Hybrid Routing as Graph Topology
+
+> **Routing chooses the capability anchor, while `agentic` determines whether execution follows a fixed workflow or enters an adaptive Agent cycle.**
+
+最终 Graph 保留 **deterministic when possible, agentic when necessary**：
+
+**FALLBACK → always fallback**
+
+**KNOWLEDGE → always retrieve first**
+
+然后：
+
+**KNOWLEDGE + non-agentic → RAG Generate**
+
+**KNOWLEDGE + agentic → Agent**
+
+其他 Route：
+
+**Known Path → Deterministic Tool / Direct**
+
+**Next Action Unknown → Agent**
+
+因此 `Route` 和 `agentic` 是两个不同维度：
+
+**Route = Where execution starts**
+
+**Agentic = Whether execution must adapt to runtime observations**
+
+---
+
+## Step 5 — Agent Loop as a Graph Cycle
+
+> **A Raw Agent `while` loop becomes an explicit graph cycle in which `agent_step` decides, `execute_tool` acts, and a conditional edge determines whether to loop or finalize.**
+
+原本：
+
+**Decide → Act → Observe → Decide Again**
+
+从隐藏的 Python Loop：
+
+**`while ...`**
+
+变成显式 Graph：
+
+**Agent Step → Tool? → Execute Tool → Agent Step**
+
+Agent State 跨轮保存：
+
+**Provider History · Processed Call Count · Request Cache · Tool Traces · Pending Failures · Successful Sources**
+
+Backend 仍然控制 Tool Budget：
+
+**最多 3 次 Tool Execution**
+
+第三次 Observation 后再执行一次 **tools-disabled final completion**，模型不能执行第四次 Tool Call。
+
+---
+
+## Step 6 — Failure Recovery & Agent State
+
+> **Agent failures are stateful unresolved conditions that may be recovered by later successful actions, so they cannot be represented by only the latest error.**
+
+`pending_failures` 保存所有尚未被后续成功操作恢复的问题：
+
+**TOOL_SELECTION**
+
+**ARGUMENT_GENERATION**
+
+**TOOL_EXECUTION + Tool Name**
+
+成功 Tool Execution 可以：
+
+**清除 TOOL_SELECTION**
+
+**清除 ARGUMENT_GENERATION**
+
+**清除同名 Tool 的 TOOL_EXECUTION**
+
+因此：
+
+**Single Tool Failure Classification ≠ Agent Failure State**
+
+最终 Failure 优先级为：
+
+**Terminal Explicit Failure → First Unresolved Pending Failure → None**
+
+---
+
+## Step 7 — Finalization & Production Parity
+
+> **A production graph must preserve not only the final answer, but also source ordering, failure precedence, tool traces, retrieval IDs, and exception metadata.**
+
+Agent 内部首先形成：
+
+**Agent State → AgentResult**
+
+然后 Orchestration 层形成：
+
+**AgentResult + Route + Retrieval Evidence → RouteExecutionResult**
+
+Non-Agentic 与 Agentic Finalization 保持独立，因为二者拥有不同的 Tool Trace、Failure Recovery 和 Evidence Aggregation 语义。
+
+Migration 过程中不仅比较 Happy Path，还必须保持：
+
+**Answer · Sources · RouteTrace · Failure Layer · Tool Calls · Retrieved IDs · Exception Metadata**
+
+因此重构原则是：
+
+**Behavior First · Abstraction Second**
+
+---
+
+## Step 8 — Production Takeover
+
+> **LangGraph replaces orchestration control flow, not the underlying capabilities that perform routing, retrieval, tool execution, generation, citation, or transport.**
+
+最终 Production Architecture：
+
+**Request**
+
+→ **GraphRouteOrchestrator**
+
+→ **Compiled LangGraph**
+
+→ **Router / Retriever / ToolExecutor / LLM**
+
+→ **RouteExecutionResult**
+
+→ **Citation & Sanitization**
+
+→ **NDJSON Response**
+
+Graph 在 Application Lifespan 中只 Compile 一次，并在多个请求之间复用。
+
+Request-local 数据仍独立保存：
+
+**AgentDeadline · Graph State · Tool Cache**
+
+因此共享 Compiled Graph 不等于共享 Request State。
+
+---
+
+## Step 9 — LangGraph, Agent, RAG & MCP
+
+> **LangGraph orchestrates workflows, an Agent provides adaptive decision-making, RAG supplies external evidence, and MCP standardizes how external capabilities and context can be exposed to AI systems.**
+
+四者不是互相替代的技术：
+
+**RAG = Retrieve Evidence**
+
+**Tools = Execute Controlled Capabilities**
+
+**Agent = Decide the Next Action**
+
+**LangGraph = Orchestrate State & Transitions**
+
+**MCP = Standardize External Capability / Context Interfaces**
+
+当前项目使用 LangGraph 管理 Workflow，但没有必要为了使用 LangGraph 而同时引入 MCP。
+
+MCP 是 Capability Integration Protocol，不是 Agent Loop 或 Graph Orchestration 的替代品。
+
+---
+
+# Day 5 Core Mental Model
+
+> **LangGraph does not make the Agent smarter; it makes the system’s state, decisions, transitions, loops, and termination rules explicit, testable, and production-controllable.**
+
+核心抽象：
+
+**State = What the workflow remembers**
+
+**Node = What happens now**
+
+**Edge = What happens next**
+
+**Conditional Edge = How the next path is chosen**
+
+**Cycle = Bounded Agent Loop**
+
+**Dependency = Capability used by Nodes**
+
+完整架构：
+
+**User**
+
+→ **Router**
+
+→ **Deterministic Workflow / RAG / Agent**
+
+→ **Tools & Evidence**
+
+→ **Finalization**
+
+→ **RouteExecutionResult**
+
+其中：
+
+**Path Known → Deterministic**
+
+**Knowledge Needed → RAG**
+
+**Next Action Unknown → Agentic**
+
+**Workflow Coordination → LangGraph**
+
+最终原则：
+
+**LangGraph owns orchestration · Components own capabilities · State carries runtime truth · Backend owns control**
+
